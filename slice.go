@@ -1,0 +1,3 @@
+package goutils
+
+func ReduceRightSlice() {}

@@ -18,15 +18,15 @@ func EachMap[A comparable, B any](collection map[A]B, fn func(key A, value B)) {
 
 func EachMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B), limit int) {
 	wg := sync.WaitGroup{}
-	gaurd := make(chan struct{}, limit)
-	defer close(gaurd)
+	guard := make(chan struct{}, limit)
+	defer close(guard)
 	for key, value := range collection {
 		wg.Add(1)
-		gaurd <- struct{}{}
+		guard <- struct{}{}
 		go func(k A, v B) {
 			defer wg.Done()
 			fn(k, v)
-			<-gaurd
+			<-guard
 		}(key, value)
 	}
 	wg.Wait()
@@ -61,18 +61,18 @@ func MapLimit[A comparable, B any, X comparable, Z any](collection map[A]B, fn f
 	result := make(map[X]Z)
 	wg := sync.WaitGroup{}
 	resultChan := make(chan mapResult[X, Z], len(collection))
-	gaurd := make(chan struct{}, limit)
-	defer close(gaurd)
+	guard := make(chan struct{}, limit)
+	defer close(guard)
 	for key, val := range collection {
 		wg.Add(1)
-		gaurd <- struct{}{}
+		guard <- struct{}{}
 		go func(k A, v B) {
 			defer wg.Done()
 			rk, rv := fn(k, v)
-			// Gaurd needs to be received before sending result to prevent deadlock.
-			// As results channel is not buffered and gaurd will block for loop
+			// Guard needs to be received before sending result to prevent deadlock.
+			// As results channel is not buffered and guard will block for loop
 			// till existing go routines are able to send on result channel
-			<-gaurd
+			<-guard
 			resultChan <- mapResult[X, Z]{
 				Key:   rk,
 				Value: rv,
