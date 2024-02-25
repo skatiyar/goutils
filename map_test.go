@@ -121,13 +121,21 @@ func TestReduceMap(t *testing.T) {
 }
 
 func TestEveryMap(t *testing.T) {
-	t.Run("should return correct values when iterator returns no error", func(nt *testing.T) {
+	t.Run("should return correct values when iterator returns no error and all values pass test", func(nt *testing.T) {
 		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
 		mapped, mappedErr := goutils.EveryMap(collection, func(key, val string) (bool, error) {
 			return strings.ContainsAny(val, "aeiou"), nil
 		})
 		assert.NoError(nt, mappedErr)
 		assert.True(nt, mapped)
+	})
+	t.Run("should return correct values when iterator returns no error and one value returs false", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fly", "3": "jumps over the", "4": "brown fence"}
+		mapped, mappedErr := goutils.EveryMap(collection, func(key, val string) (bool, error) {
+			return strings.ContainsAny(val, "aeiou"), nil
+		})
+		assert.NoError(nt, mappedErr)
+		assert.False(nt, mapped)
 	})
 	t.Run("should return correct values when iterator returns error", func(nt *testing.T) {
 		collection := map[string]string{"1": "the brown", "2": "fly", "3": "jumps over the", "4": "brown fence"}
