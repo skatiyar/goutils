@@ -168,13 +168,16 @@ func TestFilterMap(t *testing.T) {
 
 func TestGroupByMap(t *testing.T) {
 	t.Run("should return correct values when iterator returns no error", func(nt *testing.T) {
-		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
-		collectionResult := map[int][]string{9: {"the brown"}, 3: {"fox"}, 14: {"jumps over the"}, 11: {"brown fence"}}
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence", "5": "fly"}
+		collectionResult := map[int][]string{9: {"the brown"}, 3: {"fox", "fly"}, 14: {"jumps over the"}, 11: {"brown fence"}}
 		grouped, groupedErr := goutils.GroupByMap(collection, func(key, val string) (int, string, error) {
 			return len(val), val, nil
 		})
 		assert.NoError(nt, groupedErr)
-		assert.Equal(nt, grouped, collectionResult)
+		assert.Len(nt, grouped, len(collectionResult))
+		for key, val := range grouped {
+			assert.ElementsMatch(nt, val, collectionResult[key])
+		}
 	})
 	t.Run("should return correct values when iterator returns error", func(nt *testing.T) {
 		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}

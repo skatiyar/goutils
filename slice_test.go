@@ -196,8 +196,8 @@ func TestFilterSlice(t *testing.T) {
 
 func TestGroupBySlice(t *testing.T) {
 	t.Run("should return correct values when iterator returns no error", func(nt *testing.T) {
-		collection := []string{"the brown", "fox", "jumps over the", "brown fence"}
-		collectionResult := map[int][]string{9: {"the brown"}, 3: {"fox"}, 14: {"jumps over the"}, 11: {"brown fence"}}
+		collection := []string{"the brown", "fox", "jumps over the", "brown fence", "fly"}
+		collectionResult := map[int][]string{9: {"the brown"}, 3: {"fox", "fly"}, 14: {"jumps over the"}, 11: {"brown fence"}}
 		grouped, groupedErr := goutils.GroupBySlice(collection, func(val string, idx int) (int, string, error) {
 			return len(val), val, nil
 		})
