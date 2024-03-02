@@ -8,7 +8,6 @@ import (
 type ContextKey any
 
 var (
-	ErrKeyNotFound       = errors.New("context key not found")
 	ErrValueTypeNotFound = errors.New("context value of type not found")
 )
 

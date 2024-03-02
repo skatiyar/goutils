@@ -2,6 +2,7 @@ package control_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/skatiyar/goutils/control"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestWaterfall(t *testing.T) {
-	t.Run("", func(nt *testing.T) {
+	t.Run("should return correct values when no error is returned", func(nt *testing.T) {
 		fctx, fctxErr := control.Waterfall(
 			control.WaterfallBaseValue("First", "Hello"),
 			func(ctx context.Context) (context.Context, error) {
@@ -28,5 +29,17 @@ func TestWaterfall(t *testing.T) {
 		assert.NoError(nt, fctxErr)
 		assert.NoError(nt, valueErr)
 		assert.Equal(nt, value, map[string]string{"First": "Hello", "Second": "World"})
+	})
+	t.Run("should return correct values when error is returned", func(nt *testing.T) {
+		fctx, fctxErr := control.Waterfall(
+			control.WaterfallBaseValue("First", "Hello"),
+			func(ctx context.Context) (context.Context, error) {
+				return ctx, errors.New("some error")
+			},
+		)
+		assert.Error(nt, fctxErr)
+		value, valueErr := control.GetControlContextValue[string, string](fctx, "First")
+		assert.NoError(nt, valueErr)
+		assert.Equal(nt, value, "Hello")
 	})
 }
