@@ -67,6 +67,26 @@ func TestAsync_Panic(t *testing.T) {
 	}
 }
 
+func TestAsync_ErrorPanic(t *testing.T) {
+	t.Parallel()
+
+	errorinpanic := errors.New("something went wrong")
+	result := async.Async(func() (int, error) {
+		panic(errorinpanic)
+	})
+
+	value, err := result.Await()
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if err != errorinpanic {
+		t.Fatalf("expected panic error, got %v", err)
+	}
+	if value != 0 {
+		t.Fatalf("expected value 0, got %d", value)
+	}
+}
+
 func TestAsync_Concurrent(t *testing.T) {
 	t.Parallel()
 
@@ -234,6 +254,29 @@ func TestAsyncWithContext_Cancel(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context canceled error, got %v", err)
+	}
+	if value != 0 {
+		t.Fatalf("expected value 0, got %d", value)
+	}
+}
+
+func TestAsyncWithContext_ErrorPanic(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	errorinpanic := errors.New("something went wrong")
+	result := async.AsyncWithContext(ctx, func() (int, error) {
+		panic(errorinpanic)
+	})
+
+	value, err := result.Await()
+	if err == nil {
+		t.Fatal("expected an error, got nil")
+	}
+	if err != errorinpanic {
+		t.Fatalf("expected panic error, got %v", err)
 	}
 	if value != 0 {
 		t.Fatalf("expected value 0, got %d", value)
