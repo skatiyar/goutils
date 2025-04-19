@@ -14,7 +14,7 @@ type resultValue[T any] struct {
 
 // Result is a generic type that encapsulates the result of an asynchronous operation.
 // It uses a channel to communicate the result value of type T, allowing for safe
-// and concurrent access to the result of a computation or process.
+// and concurrent access to the result.
 type Result[T any] struct {
 	result chan resultValue[T]
 }
@@ -37,16 +37,6 @@ func (f *Result[T]) Await() (T, error) {
 // If the function `f` returns an error, the result will contain the error.
 // If a panic occurs within the goroutine, the result will contain a predefined error
 // or the recovered panic value if it is of type `error`.
-//
-// Type Parameters:
-//   - T: The type of the value returned by the function `f`.
-//
-// Parameters:
-//   - f: A function that returns a value of type `T` and an error.
-//
-// Returns:
-//   - Result[T]: A wrapper that allows retrieving the result of the asynchronous
-//     execution.
 //
 // Example usage:
 //
@@ -101,17 +91,6 @@ func Async[T any](f func() (T, error)) Result[T] {
 //
 // If a panic occurs within the goroutine, the result will contain a predefined error
 // or the recovered panic value if it is of type `error`.
-//
-// Type Parameters:
-//   - T: The type of the value returned by the function.
-//
-// Parameters:
-//   - ctx: The context to associate with the asynchronous operation.
-//   - f: A function that returns a value of type T and an error.
-//
-// Returns:
-//
-//	A Result[T] containing the result of the function execution or an error.
 //
 // Example usage:
 //
