@@ -24,6 +24,6 @@ func Waterfall(executors ...func(context.Context) (context.Context, error)) (con
 // Useful as the first function in a waterfall.
 func WaterfallBaseValue(key, value interface{}) func(context.Context) (context.Context, error) {
 	return func(ctx context.Context) (context.Context, error) {
-		return context.WithValue(context.Background(), ContextKey(key), value), nil
+		return SetControlContextValue(ctx, key, value), nil
 	}
 }
