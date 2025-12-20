@@ -3,31 +3,11 @@ package async
 import (
 	"context"
 	"errors"
+
+	"github.com/skatiyar/goutils/internal/primitives"
 )
 
 var ErrorPanicInGoroutine = errors.New("panic in go routine")
-
-type resultValue[T any] struct {
-	Value T
-	Error error
-}
-
-// Result is a generic type that encapsulates the result of an asynchronous operation.
-// It uses a channel to communicate the result value of type T, allowing for safe
-// and concurrent access to the result.
-type Result[T any] struct {
-	result chan resultValue[T]
-}
-
-// Await waits for the asynchronous operation to complete and retrieves the result.
-// It blocks until the result is available, then returns the value and any error
-// that occurred during the operation. The result channel is closed after the
-// value is retrieved.
-func (f *Result[T]) Await() (T, error) {
-	data := <-f.result
-	defer close(f.result)
-	return data.Value, data.Error
-}
 
 // Async executes a given function `f` asynchronously in a separate goroutine and
 // returns a `Result[T]` that can be used to retrieve the result of the function
@@ -58,28 +38,24 @@ func (f *Result[T]) Await() (T, error) {
 //	        fmt.Println("Value:", result.Value)
 //	    }
 //	}
-func Async[T any](f func() (T, error)) Result[T] {
-	result := make(chan resultValue[T], 1)
+func Async[T any](f func() (T, error)) primitives.Result[T] {
+	result := primitives.NewResult[T]()
 
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				if rec, ok := r.(error); ok {
-					result <- resultValue[T]{Error: rec}
+					result.Resolve(*new(T), rec)
 				} else {
-					result <- resultValue[T]{Error: ErrorPanicInGoroutine}
+					result.Resolve(*new(T), ErrorPanicInGoroutine)
 				}
 			}
 		}()
 		val, err := f()
-		if err != nil {
-			result <- resultValue[T]{Error: err}
-		} else {
-			result <- resultValue[T]{Value: val}
-		}
+		result.Resolve(val, err)
 	}()
 
-	return Result[T]{result: result}
+	return result
 }
 
 // AsyncWithContext executes a function asynchronously in a separate goroutine,
@@ -115,28 +91,28 @@ func Async[T any](f func() (T, error)) Result[T] {
 //	        fmt.Println("Value:", result)
 //	    }
 //	}
-func AsyncWithContext[T any](ctx context.Context, f func() (T, error)) Result[T] {
-	result := make(chan resultValue[T], 1)
+func AsyncWithContext[T any](ctx context.Context, f func() (T, error)) primitives.Result[T] {
+	result := primitives.NewResult[T]()
 
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				if rec, ok := r.(error); ok {
-					result <- resultValue[T]{Error: rec}
+					result.Resolve(*new(T), rec)
 				} else {
-					result <- resultValue[T]{Error: ErrorPanicInGoroutine}
+					result.Resolve(*new(T), ErrorPanicInGoroutine)
 				}
 			}
 		}()
 		select {
 		case <-ctx.Done():
-			result <- resultValue[T]{Error: ctx.Err()}
+			result.Resolve(*new(T), ctx.Err())
 			return
 		default:
 			val, err := f()
-			result <- resultValue[T]{Error: err, Value: val}
+			result.Resolve(val, err)
 		}
 	}()
 
-	return Result[T]{result: result}
+	return result
 }
