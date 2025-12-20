@@ -8,6 +8,35 @@ import (
 	"github.com/skatiyar/goutils/queue"
 )
 
+func TestNewQueue(t *testing.T) {
+	cfg := queue.Config{Size: -1, Concurrency: -1, DefaultTimeout: -1}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+	if q == nil {
+		t.Fatal("expected non-nil queue")
+	}
+	if q.Running() != 0 {
+		t.Fatalf("expected running 0, got %d", q.Running())
+	}
+	if q.Queued() != 0 {
+		t.Fatalf("expected queued 0, got %d", q.Queued())
+	}
+	if q.Status() != queue.StatusIdle {
+		t.Fatalf("expected status idle, got %v", q.Status())
+	}
+	actualCfg := q.Config()
+	if actualCfg.Size != 100 {
+		t.Fatalf("expected default size 100, got %d", actualCfg.Size)
+	}
+	if actualCfg.Concurrency != 10 {
+		t.Fatalf("expected default concurrency 10, got %d", actualCfg.Concurrency)
+	}
+	if actualCfg.DefaultTimeout != queue.DefaultTimeout {
+		t.Fatalf("expected default timeout > 0, got %v", actualCfg.DefaultTimeout)
+	}
+}
+
 func TestPushAndProcess(t *testing.T) {
 	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
 	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {

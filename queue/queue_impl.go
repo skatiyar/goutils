@@ -10,6 +10,8 @@ import (
 	"github.com/skatiyar/goutils/internal/primitives"
 )
 
+const DefaultTimeout = 1<<63 - 1 // effectively no timeout
+
 type task[T, R any] struct {
 	ctx    context.Context
 	value  T
@@ -23,6 +25,7 @@ type QueueImpl[T, R any] struct {
 	worker         func(context.Context, T) (R, error)
 	closed         uint32
 	running        int64
+	concurrency    int
 	defaultTimeout time.Duration
 }
 
@@ -38,7 +41,7 @@ func New[T, R any](
 		cfg.Concurrency = 10
 	}
 	if cfg.DefaultTimeout <= 0 {
-		cfg.DefaultTimeout = 1<<63 - 1 // effectively no timeout
+		cfg.DefaultTimeout = DefaultTimeout // effectively no timeout
 	}
 	queue := &QueueImpl[T, R]{
 		wg:             sync.WaitGroup{},
@@ -46,6 +49,7 @@ func New[T, R any](
 		worker:         process,
 		closed:         0,
 		running:        0,
+		concurrency:    cfg.Concurrency,
 		defaultTimeout: cfg.DefaultTimeout,
 	}
 	go queue.work(cfg.Concurrency)
@@ -143,4 +147,13 @@ func (qi *QueueImpl[T, R]) Status() Status {
 		return StatusRunning
 	}
 	return StatusIdle
+}
+
+// Config returns the actual configuration of the queue.
+func (qi *QueueImpl[T, R]) Config() Config {
+	return Config{
+		Size:           cap(qi.items),
+		Concurrency:    qi.concurrency,
+		DefaultTimeout: qi.defaultTimeout,
+	}
 }
