@@ -16,6 +16,7 @@ type task[T, R any] struct {
 	result primitives.Result[R]
 }
 
+// QueueImpl is the implementation of the Queue interface.
 type QueueImpl[T, R any] struct {
 	wg             sync.WaitGroup
 	items          chan task[T, R]
@@ -25,6 +26,7 @@ type QueueImpl[T, R any] struct {
 	defaultTimeout time.Duration
 }
 
+// New creates a new Queue with the given configuration and processing function.
 func New[T, R any](
 	cfg Config,
 	process func(context.Context, T) (R, error),
@@ -82,6 +84,10 @@ func (qi *QueueImpl[T, R]) work(concurrency int) {
 	}
 }
 
+// Shutdown gracefully shuts down the queue, waiting for all running tasks to complete.
+// Queue is marked as closed immediately; no new tasks can be pushed after this call.
+// Maximum wait time to finish queued tasks can be controlled via the provided context,
+// post timeout pending tasks will be dropped.
 func (qi *QueueImpl[T, R]) Shutdown(ctx context.Context) error {
 	atomic.StoreUint32(&qi.closed, 1)
 	qi.wg.Wait()
