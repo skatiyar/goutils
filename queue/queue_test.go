@@ -103,13 +103,40 @@ func TestRunningAndStatus(t *testing.T) {
 	}
 
 	// give a moment for internal counters to update
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(1 * time.Millisecond)
 
 	if q.Running() != 0 {
 		t.Fatalf("expected running 0 after completion, got %d", q.Running())
 	}
 	if q.Status() != queue.StatusIdle {
 		t.Fatalf("expected status idle after completion, got %v", q.Status())
+	}
+}
+
+func TestWorkerPanicHandling(t *testing.T) {
+	cfg := queue.Config{Size: 5, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		if v == 42 {
+			panic("simulated panic")
+		}
+		return v * 2, nil
+	})
+
+	res1 := q.Push(context.Background(), 42)
+	res2 := q.Push(context.Background(), 3)
+
+	v2, err2 := res2.Await()
+	if err2 != nil || v2 != 6 {
+		t.Fatalf("unexpected result r2: %v, %v", v2, err2)
+	}
+
+	v1, err1 := res1.Await()
+	if err1 == nil {
+		t.Fatalf("expected error from panic, got value %v", v1)
+	}
+	expectedErrMsg := "panic in worker simulated panic"
+	if err1.Error() != expectedErrMsg {
+		t.Fatalf("expected error message %q, got %q", expectedErrMsg, err1.Error())
 	}
 }
 
