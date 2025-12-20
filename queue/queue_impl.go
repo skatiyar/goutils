@@ -64,7 +64,6 @@ func (qi *QueueImpl[T, R]) work(concurrency int) {
 
 		// process task in a goroutine; when done release slot and decrement counters
 		go func(ival task[T, R]) {
-			fmt.Printf("val %v\n", ival)
 			defer func() {
 				if r := recover(); r != nil {
 					if err, ok := r.(error); ok {

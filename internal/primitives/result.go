@@ -1,7 +1,5 @@
 package primitives
 
-import "fmt"
-
 type resultValue[T any] struct {
 	Value T
 	Error error
@@ -28,7 +26,6 @@ func (r Result[T]) Await() (T, error) {
 // value and error into the result channel. This method is typically called
 // internally by the asynchronous operation to signal completion.
 func (r Result[T]) Resolve(value T, err error) {
-	fmt.Println("ole")
 	r.result <- resultValue[T]{Value: value, Error: err}
 }
 
