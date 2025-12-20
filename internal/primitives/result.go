@@ -25,6 +25,8 @@ func (r Result[T]) Await() (T, error) {
 // Resolve sets the result of the asynchronous operation by sending the provided
 // value and error into the result channel. This method is typically called
 // internally by the asynchronous operation to signal completion.
+// NOTE: This method should only be called once per Result instance. As of now,
+// there is no mechanism to prevent multiple calls, which may lead to unexpected behavior.
 func (r Result[T]) Resolve(value T, err error) {
 	r.result <- resultValue[T]{Value: value, Error: err}
 }
