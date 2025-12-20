@@ -2,6 +2,7 @@ package queue_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -137,6 +138,33 @@ func TestWorkerPanicHandling(t *testing.T) {
 	expectedErrMsg := "panic in worker simulated panic"
 	if err1.Error() != expectedErrMsg {
 		t.Fatalf("expected error message %q, got %q", expectedErrMsg, err1.Error())
+	}
+}
+
+func TestWorkerPanicHandlingWhenErrorType(t *testing.T) {
+	err := errors.New("some panic error")
+	cfg := queue.Config{Size: 5, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		if v == 42 {
+			panic(err)
+		}
+		return v * 2, nil
+	})
+
+	res1 := q.Push(context.Background(), 42)
+	res2 := q.Push(context.Background(), 3)
+
+	v2, err2 := res2.Await()
+	if err2 != nil || v2 != 6 {
+		t.Fatalf("unexpected result r2: %v, %v", v2, err2)
+	}
+
+	v1, err1 := res1.Await()
+	if err1 == nil {
+		t.Fatalf("expected error from panic, got value %v", v1)
+	}
+	if err1 != err {
+		t.Fatalf("expected error %v, got %v", err, err1)
 	}
 }
 
