@@ -55,6 +55,25 @@ func TestPushWithNilContext(t *testing.T) {
 	}
 }
 
+func TestPushWithZeroDeadlineContext(t *testing.T) {
+	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
+	defer cancel()
+
+	res := q.Push(ctx, 7)
+	got, err := res.Await()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded error, got: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("expected zero value, got %v", got)
+	}
+}
+
 func TestPushAndProcess(t *testing.T) {
 	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
 	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
