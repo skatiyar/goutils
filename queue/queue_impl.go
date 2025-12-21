@@ -3,7 +3,6 @@ package queue
 import (
 	"context"
 	"fmt"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,8 +20,9 @@ type task[T, R any] struct {
 
 // QueueImpl is the implementation of the Queue interface.
 type QueueImpl[T, R any] struct {
-	wg             sync.WaitGroup
 	items          chan task[T, R]
+	signalClose    chan struct{}
+	exitChan       chan struct{}
 	worker         func(context.Context, T) (R, error)
 	closed         uint32
 	running        int64
@@ -45,8 +45,9 @@ func New[T, R any](
 		cfg.DefaultTimeout = DefaultTimeout // effectively no timeout
 	}
 	queue := &QueueImpl[T, R]{
-		wg:             sync.WaitGroup{},
 		items:          make(chan task[T, R], cfg.Size),
+		signalClose:    make(chan struct{}),
+		exitChan:       make(chan struct{}),
 		worker:         process,
 		closed:         0,
 		running:        0,
@@ -60,39 +61,50 @@ func New[T, R any](
 func (qi *QueueImpl[T, R]) work(concurrency int) {
 	// semaphore to bound concurrent workers
 	sem := make(chan struct{}, concurrency)
-	defer close(sem)
+	defer func() {
+		defer close(qi.items)
+		defer close(sem)
+		qi.exitChan <- struct{}{}
+	}()
 
 	// continuously process tasks from the queue
-	for val := range qi.items {
-		// acquire a slot (blocks when we reached max concurrency)
-		sem <- struct{}{}
-		atomic.AddInt64(&qi.running, 1)
-		qi.wg.Add(1)
-
-		// process task in a goroutine; when done release slot and decrement counters
-		go func(ival task[T, R]) {
-			defer func() {
-				if r := recover(); r != nil {
-					if err, ok := r.(error); ok {
-						ival.result.Resolve(*new(R), err)
-					} else {
-						ival.result.Resolve(*new(R), fmt.Errorf("panic in worker %v", r))
-					}
-				}
-				atomic.AddInt64(&qi.running, -1)
-				qi.wg.Done()
-				ival.ctxCancel()
-				<-sem // release slot
-			}()
-			select {
-			case <-ival.ctx.Done():
-				ival.result.Resolve(*new(R), ival.ctx.Err())
-				return
-			default:
-				data, dataErr := qi.worker(ival.ctx, ival.value)
-				ival.result.Resolve(data, dataErr)
+	for {
+		if qi.isClosed() && len(qi.items) == 0 {
+			return // exit if closed and no more items
+		}
+		select {
+		case <-qi.signalClose:
+			atomic.StoreUint32(&qi.closed, 1)
+		default:
+			sem <- struct{}{}
+			val, ok := <-qi.items
+			if !ok {
+				return // queue closed
 			}
-		}(val)
+			atomic.AddInt64(&qi.running, 1)
+			go func(ival task[T, R]) {
+				defer func() {
+					if r := recover(); r != nil {
+						if err, ok := r.(error); ok {
+							ival.result.Resolve(*new(R), err)
+						} else {
+							ival.result.Resolve(*new(R), fmt.Errorf("panic in worker %v", r))
+						}
+					}
+					atomic.AddInt64(&qi.running, -1)
+					ival.ctxCancel()
+					<-sem // release slot
+				}()
+				select {
+				case <-ival.ctx.Done():
+					ival.result.Resolve(*new(R), ival.ctx.Err())
+					return
+				default:
+					data, dataErr := qi.worker(ival.ctx, ival.value)
+					ival.result.Resolve(data, dataErr)
+				}
+			}(val)
+		}
 	}
 }
 
@@ -103,17 +115,13 @@ func (qi *QueueImpl[T, R]) work(concurrency int) {
 func (qi *QueueImpl[T, R]) Shutdown(ctx context.Context) error {
 	newCtx, ctxCancel := qi.context(ctx)
 	defer ctxCancel()
-	atomic.StoreUint32(&qi.closed, 1)
-	wgDone := make(chan struct{})
-	go func() {
-		qi.wg.Wait()
-		close(wgDone)
-	}()
+	qi.signalClose <- struct{}{}
+	defer close(qi.signalClose)
 	select {
 	case <-newCtx.Done():
 		return newCtx.Err()
-	case <-wgDone:
-		close(qi.items)
+	case <-qi.exitChan:
+		close(qi.exitChan)
 	}
 	return nil
 }
@@ -138,13 +146,22 @@ func (qi *QueueImpl[T, R]) context(ctx context.Context) (context.Context, contex
 func (qi *QueueImpl[T, R]) Push(ctx context.Context, value T) primitives.Result[R] {
 	newCtx, ctxCancel := qi.context(ctx)
 	result := primitives.NewResult[R]()
-	if atomic.LoadUint32(&qi.closed) != 0 {
+
+	if qi.isClosed() {
 		defer ctxCancel()
 		result.Resolve(*new(R), ErrQueueClosed)
-	} else {
-		qi.items <- task[T, R]{ctx: newCtx, ctxCancel: ctxCancel, value: value, result: result}
+		return result
 	}
-	return result
+
+	select {
+	case qi.items <- task[T, R]{ctx: newCtx, ctxCancel: ctxCancel, value: value, result: result}:
+		// successfully enqueued
+		return result
+	case <-newCtx.Done():
+		defer ctxCancel()
+		result.Resolve(*new(R), ErrPushTimeout)
+		return result
+	}
 }
 
 // Queued returns the number of tasks currently queued in the queue.
@@ -164,7 +181,7 @@ func (qi *QueueImpl[T, R]) Running() int {
 // This method provides a quick way to check the state of the queue for debugging and monitoring purposes.
 // Queue state can change between StatusRunning & StatusIdle right after this call, but StatusClosed is final.
 func (qi *QueueImpl[T, R]) Status() Status {
-	if atomic.LoadUint32(&qi.closed) != 0 {
+	if qi.isClosed() {
 		return StatusClosed
 	}
 	if qi.Running() > 0 || qi.Queued() > 0 {
@@ -180,4 +197,8 @@ func (qi *QueueImpl[T, R]) Config() Config {
 		Concurrency:    qi.concurrency,
 		DefaultTimeout: qi.defaultTimeout,
 	}
+}
+
+func (qi *QueueImpl[T, R]) isClosed() bool {
+	return atomic.LoadUint32(&qi.closed) != 0
 }
