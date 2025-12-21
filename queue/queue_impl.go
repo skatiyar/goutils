@@ -13,9 +13,10 @@ import (
 const DefaultTimeout = 1<<63 - 1 // effectively no timeout
 
 type task[T, R any] struct {
-	ctx    context.Context
-	value  T
-	result primitives.Result[R]
+	ctx       context.Context
+	ctxCancel context.CancelFunc
+	value     T
+	result    primitives.Result[R]
 }
 
 // QueueImpl is the implementation of the Queue interface.
@@ -80,10 +81,17 @@ func (qi *QueueImpl[T, R]) work(concurrency int) {
 				}
 				atomic.AddInt64(&qi.running, -1)
 				qi.wg.Done()
+				ival.ctxCancel()
 				<-sem // release slot
 			}()
-			data, dataErr := qi.worker(ival.ctx, ival.value)
-			ival.result.Resolve(data, dataErr)
+			select {
+			case <-ival.ctx.Done():
+				ival.result.Resolve(*new(R), ival.ctx.Err())
+				return
+			default:
+				data, dataErr := qi.worker(ival.ctx, ival.value)
+				ival.result.Resolve(data, dataErr)
+			}
 		}(val)
 	}
 }
@@ -93,32 +101,48 @@ func (qi *QueueImpl[T, R]) work(concurrency int) {
 // Maximum wait time to finish queued tasks can be controlled via the provided context,
 // post timeout pending tasks will be dropped.
 func (qi *QueueImpl[T, R]) Shutdown(ctx context.Context) error {
+	newCtx, ctxCancel := qi.context(ctx)
+	defer ctxCancel()
 	atomic.StoreUint32(&qi.closed, 1)
-	qi.wg.Wait()
-	close(qi.items)
+	wgDone := make(chan struct{})
+	go func() {
+		qi.wg.Wait()
+		close(wgDone)
+	}()
+	select {
+	case <-newCtx.Done():
+		return newCtx.Err()
+	case <-wgDone:
+		close(qi.items)
+	}
 	return nil
+}
+
+// context prepares a context with default timeout if needed.
+func (qi *QueueImpl[T, R]) context(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		// apply default timeout if no context is provided
+		return context.WithTimeout(context.Background(), qi.defaultTimeout)
+	} else if _, ok := ctx.Deadline(); !ok {
+		// apply default timeout if no deadline is set
+		return context.WithTimeout(ctx, qi.defaultTimeout)
+	} else {
+		// use provided context as is and let caller handle timeout/cancellation
+		return ctx, func() {}
+	}
 }
 
 // Push add a new task to the queue.
 // If the queue is closed, it returns an error immediately.
 // Otherwise, it enqueues the task and returns a future result.
 func (qi *QueueImpl[T, R]) Push(ctx context.Context, value T) primitives.Result[R] {
-	if ctx == nil {
-		// apply default timeout if no context is provided
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.Background(), qi.defaultTimeout)
-		defer cancel()
-	} else if deadline, ok := ctx.Deadline(); !ok || deadline.IsZero() {
-		// apply default timeout if no deadline is set
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, qi.defaultTimeout)
-		defer cancel()
-	}
+	newCtx, ctxCancel := qi.context(ctx)
 	result := primitives.NewResult[R]()
 	if atomic.LoadUint32(&qi.closed) != 0 {
+		defer ctxCancel()
 		result.Resolve(*new(R), ErrQueueClosed)
 	} else {
-		qi.items <- task[T, R]{ctx: ctx, value: value, result: result}
+		qi.items <- task[T, R]{ctx: newCtx, ctxCancel: ctxCancel, value: value, result: result}
 	}
 	return result
 }
@@ -138,12 +162,12 @@ func (qi *QueueImpl[T, R]) Running() int {
 // If there are tasks being processed, the status is StatusRunning.
 // If the queue has been closed, the status is StatusClosed.
 // This method provides a quick way to check the state of the queue for debugging and monitoring purposes.
-// Queue state can change immediately after this call.
+// Queue state can change between StatusRunning & StatusIdle right after this call, but StatusClosed is final.
 func (qi *QueueImpl[T, R]) Status() Status {
 	if atomic.LoadUint32(&qi.closed) != 0 {
 		return StatusClosed
 	}
-	if qi.Running() > 0 {
+	if qi.Running() > 0 || qi.Queued() > 0 {
 		return StatusRunning
 	}
 	return StatusIdle

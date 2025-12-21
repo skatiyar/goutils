@@ -38,6 +38,23 @@ func TestNewQueue(t *testing.T) {
 	}
 }
 
+func TestPushWithNilContext(t *testing.T) {
+	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+
+	//lint:ignore SA1012 we are testing nil context handling
+	res := q.Push(nil, 5)
+	got, err := res.Await()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != 10 {
+		t.Fatalf("expected 10, got %v", got)
+	}
+}
+
 func TestPushAndProcess(t *testing.T) {
 	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
 	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
