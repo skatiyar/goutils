@@ -28,6 +28,7 @@ type Queue[T, R any] interface {
 	Queued() int
 	Running() int
 	Status() Status
+	Config() Config
 }
 
 var (

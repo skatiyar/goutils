@@ -2,11 +2,79 @@ package queue_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/skatiyar/goutils/queue"
 )
+
+func TestNewQueue(t *testing.T) {
+	cfg := queue.Config{Size: -1, Concurrency: -1, DefaultTimeout: -1}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+	if q == nil {
+		t.Fatal("expected non-nil queue")
+	}
+	if q.Running() != 0 {
+		t.Fatalf("expected running 0, got %d", q.Running())
+	}
+	if q.Queued() != 0 {
+		t.Fatalf("expected queued 0, got %d", q.Queued())
+	}
+	if q.Status() != queue.StatusIdle {
+		t.Fatalf("expected status idle, got %v", q.Status())
+	}
+	actualCfg := q.Config()
+	if actualCfg.Size != 100 {
+		t.Fatalf("expected default size 100, got %d", actualCfg.Size)
+	}
+	if actualCfg.Concurrency != 10 {
+		t.Fatalf("expected default concurrency 10, got %d", actualCfg.Concurrency)
+	}
+	if actualCfg.DefaultTimeout != queue.DefaultTimeout {
+		t.Fatalf("expected default timeout > 0, got %v", actualCfg.DefaultTimeout)
+	}
+}
+
+func TestPushWithNilContext(t *testing.T) {
+	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+
+	//lint:ignore SA1012 we are testing nil context handling
+	res := q.Push(nil, 5)
+	got, err := res.Await()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != 10 {
+		t.Fatalf("expected 10, got %v", got)
+	}
+}
+
+func TestPushWithZeroDeadlineContext(t *testing.T) {
+	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		return v * 2, nil
+	})
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Time{})
+	defer cancel()
+
+	res := q.Push(ctx, 7)
+	got, err := res.Await()
+	// Either context deadline exceeded or push timeout error is acceptable
+	// as select case may vary at runtime as both queueing and context done are ready.
+	if !(errors.Is(err, context.DeadlineExceeded) || errors.Is(err, queue.ErrPushTimeout)) {
+		t.Fatalf("expected context deadline exceeded error, got: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("expected zero value, got %v", got)
+	}
+}
 
 func TestPushAndProcess(t *testing.T) {
 	cfg := queue.Config{Size: 10, Concurrency: 2, DefaultTimeout: time.Second}
@@ -74,13 +142,113 @@ func TestRunningAndStatus(t *testing.T) {
 	}
 
 	// give a moment for internal counters to update
-	time.Sleep(10 * time.Millisecond)
+	time.Sleep(1 * time.Millisecond)
 
 	if q.Running() != 0 {
 		t.Fatalf("expected running 0 after completion, got %d", q.Running())
 	}
 	if q.Status() != queue.StatusIdle {
 		t.Fatalf("expected status idle after completion, got %v", q.Status())
+	}
+}
+
+func TestWorkerPanicHandling(t *testing.T) {
+	cfg := queue.Config{Size: 5, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		if v == 42 {
+			panic("simulated panic")
+		}
+		return v * 2, nil
+	})
+
+	res1 := q.Push(context.Background(), 42)
+	res2 := q.Push(context.Background(), 3)
+
+	v2, err2 := res2.Await()
+	if err2 != nil || v2 != 6 {
+		t.Fatalf("unexpected result r2: %v, %v", v2, err2)
+	}
+
+	v1, err1 := res1.Await()
+	if err1 == nil {
+		t.Fatalf("expected error from panic, got value %v", v1)
+	}
+	expectedErrMsg := "panic in worker simulated panic"
+	if err1.Error() != expectedErrMsg {
+		t.Fatalf("expected error message %q, got %q", expectedErrMsg, err1.Error())
+	}
+}
+
+func TestPushTimeout(t *testing.T) {
+	cfg := queue.Config{Size: 1, Concurrency: 1, DefaultTimeout: 50 * time.Millisecond}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		time.Sleep(100 * time.Millisecond) // simulate long processing
+		return v * 2, nil
+	})
+
+	// first push should succeed
+	res1 := q.Push(context.Background(), 10)
+
+	// second push should succeed but eventually timeout
+	res2 := q.Push(context.Background(), 20)
+
+	// third push should timeout due to full queue
+	res3 := q.Push(context.Background(), 30)
+
+	v1, err1 := res1.Await()
+	if err1 != nil || v1 != 20 {
+		t.Fatalf("unexpected result r1: %v, %v", v1, err1)
+	}
+
+	v2, err2 := res2.Await()
+	if err2 != context.DeadlineExceeded {
+		t.Fatalf("expected DeadlineExceeded, got: %v", err2)
+	}
+	if v2 != 0 {
+		t.Fatalf("expected zero value on timeout, got: %v", v2)
+	}
+
+	v3, err3 := res3.Await()
+	if err3 != queue.ErrPushTimeout {
+		t.Fatalf("expected ErrPushTimeout, got: %v", err3)
+	}
+	if v3 != 0 {
+		t.Fatalf("expected zero value on timeout, got: %v", v3)
+	}
+
+	// fourth push should pass after some time
+	res4 := q.Push(context.Background(), 40)
+
+	v4, err4 := res4.Await()
+	if err4 != nil || v4 != 80 {
+		t.Fatalf("unexpected result r1: %v, %v", v4, err4)
+	}
+}
+
+func TestWorkerPanicHandlingWhenErrorType(t *testing.T) {
+	err := errors.New("some panic error")
+	cfg := queue.Config{Size: 5, Concurrency: 2, DefaultTimeout: time.Second}
+	q := queue.New(cfg, func(ctx context.Context, v int) (int, error) {
+		if v == 42 {
+			panic(err)
+		}
+		return v * 2, nil
+	})
+
+	res1 := q.Push(context.Background(), 42)
+	res2 := q.Push(context.Background(), 3)
+
+	v2, err2 := res2.Await()
+	if err2 != nil || v2 != 6 {
+		t.Fatalf("unexpected result r2: %v, %v", v2, err2)
+	}
+
+	v1, err1 := res1.Await()
+	if err1 == nil {
+		t.Fatalf("expected error from panic, got value %v", v1)
+	}
+	if err1 != err {
+		t.Fatalf("expected error %v, got %v", err, err1)
 	}
 }
 
@@ -91,7 +259,9 @@ func TestShutdownClosesQueue(t *testing.T) {
 	})
 
 	// shutdown should mark queue closed
-	if err := q.Shutdown(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := q.Shutdown(ctx); err != nil {
 		t.Fatalf("unexpected shutdown error: %v", err)
 	}
 	if q.Status() != queue.StatusClosed {
