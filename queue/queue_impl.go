@@ -156,12 +156,11 @@ func (qi *QueueImpl[T, R]) Push(ctx context.Context, value T) primitives.Result[
 	select {
 	case qi.items <- task[T, R]{ctx: newCtx, ctxCancel: ctxCancel, value: value, result: result}:
 		// successfully enqueued
-		return result
 	case <-newCtx.Done():
 		defer ctxCancel()
 		result.Resolve(*new(R), ErrPushTimeout)
-		return result
 	}
+	return result
 }
 
 // Queued returns the number of tasks currently queued in the queue.

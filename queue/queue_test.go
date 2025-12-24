@@ -66,7 +66,9 @@ func TestPushWithZeroDeadlineContext(t *testing.T) {
 
 	res := q.Push(ctx, 7)
 	got, err := res.Await()
-	if !errors.Is(err, context.DeadlineExceeded) {
+	// Either context deadline exceeded or push timeout error is acceptable
+	// as select case may vary at runtime as both queueing and context done are ready.
+	if !(errors.Is(err, context.DeadlineExceeded) || errors.Is(err, queue.ErrPushTimeout)) {
 		t.Fatalf("expected context deadline exceeded error, got: %v", err)
 	}
 	if got != 0 {
