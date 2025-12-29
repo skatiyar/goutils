@@ -1,6 +1,7 @@
 package async_test
 
 import (
+	"errors"
 	"math/rand"
 	"strings"
 	"sync"
@@ -17,10 +18,11 @@ func TestEachMap(t *testing.T) {
 		expectedResult := []string{"brown", "fox", "jumps over", "brown fence"}
 		rmu := sync.RWMutex{}
 		results := make([]string, 0)
-		async.EachMap(collection, func(key, val string) {
+		async.EachMap(collection, func(key, val string) error {
 			rmu.Lock()
 			defer rmu.Unlock()
 			results = append(results, strings.Trim(strings.ReplaceAll(val, "the", ""), " "))
+			return nil
 		})
 		assert.ElementsMatch(nt, results, expectedResult)
 	})
@@ -29,11 +31,12 @@ func TestEachMap(t *testing.T) {
 		expectedResult := []string{"brown", "fox", "jumps over", "brown fence"}
 		rmu := sync.RWMutex{}
 		results := make([]string, 0)
-		async.EachMap(collection, func(key, val string) {
+		async.EachMap(collection, func(key, val string) error {
 			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
 			rmu.Lock()
 			defer rmu.Unlock()
 			results = append(results, strings.Trim(strings.ReplaceAll(val, "the", ""), " "))
+			return nil
 		})
 		assert.ElementsMatch(nt, results, expectedResult)
 	})
@@ -48,7 +51,7 @@ func TestEachMapLimit(t *testing.T) {
 		maxLimit := 2
 		currentLimit := 0
 		limitExceeded := false
-		async.EachMapLimit(collection, func(key, val string) {
+		async.EachMapLimit(collection, func(key, val string) error {
 			rmu.Lock()
 			currentLimit += 1
 			defer func() {
@@ -59,6 +62,7 @@ func TestEachMapLimit(t *testing.T) {
 				limitExceeded = true
 			}
 			results = append(results, strings.Trim(strings.ReplaceAll(val, "the", ""), " "))
+			return nil
 		}, maxLimit)
 		assert.ElementsMatch(nt, results, expectedResult)
 		assert.False(nt, limitExceeded)
@@ -71,7 +75,7 @@ func TestEachMapLimit(t *testing.T) {
 		maxLimit := 4
 		currentLimit := 0
 		limitExceeded := false
-		async.EachMapLimit(collection, func(key, val string) {
+		async.EachMapLimit(collection, func(key, val string) error {
 			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
 			rmu.Lock()
 			currentLimit += 1
@@ -83,6 +87,7 @@ func TestEachMapLimit(t *testing.T) {
 				limitExceeded = true
 			}
 			results = append(results, strings.Trim(strings.ReplaceAll(val, "the", ""), " "))
+			return nil
 		}, maxLimit)
 		assert.ElementsMatch(nt, results, expectedResult)
 		assert.False(nt, limitExceeded)
@@ -93,18 +98,53 @@ func TestMap(t *testing.T) {
 	t.Run("should return correct values for sync operations", func(nt *testing.T) {
 		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
 		collectionResult := map[string]string{"1": "brown", "2": "fox", "3": "jumps over", "4": "brown fence"}
-		assert.Equal(nt, async.Map(collection, func(key, val string) (string, string) {
-			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " ")
-		}), collectionResult)
+		r, rerr := async.Map(collection, func(key, val string) (string, string, error) {
+			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " "), nil
+		})
+		assert.NoError(nt, rerr)
+		assert.Equal(nt, r, collectionResult)
 	})
 
 	t.Run("should return correct values for async operations", func(nt *testing.T) {
 		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
 		collectionResult := map[string]string{"1": "brown", "2": "fox", "3": "jumps over", "4": "brown fence"}
-		assert.Equal(nt, async.Map(collection, func(key, val string) (string, string) {
+		r, rerr := async.Map(collection, func(key, val string) (string, string, error) {
 			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
-			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " ")
-		}), collectionResult)
+			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " "), nil
+		})
+		assert.NoError(nt, rerr)
+		assert.Equal(nt, collectionResult, r)
+	})
+
+	t.Run("should return error if function returns error", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		r, rerr := async.Map(collection, func(key, val string) (string, string, error) {
+			return key, "", errors.New("some error")
+		})
+		assert.Error(nt, rerr)
+		assert.Nil(nt, r)
+	})
+
+	t.Run("should return immediately post error in function", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		startTime := time.Now()
+		r, rerr := async.Map(collection, func(key, val string) (string, string, error) {
+			time.Sleep(200 * time.Millisecond)
+			return key, "", errors.New("some error")
+		})
+		elapsedTime := time.Since(startTime)
+		assert.Error(nt, rerr)
+		assert.Nil(nt, r)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 210) // ensuring it returned immediately after first error
+	})
+
+	t.Run("should return error if function panics", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		r, rerr := async.Map(collection, func(key, val string) (string, string, error) {
+			panic("some panic")
+		})
+		assert.Error(nt, rerr)
+		assert.Nil(nt, r)
 	})
 }
 
@@ -116,7 +156,7 @@ func TestMapLimit(t *testing.T) {
 		rmu := sync.RWMutex{}
 		currentLimit := 0
 		limitExceeded := false
-		result := async.MapLimit(collection, func(key, val string) (string, string) {
+		result, resultErr := async.MapLimit(collection, func(key, val string) (string, string, error) {
 			rmu.Lock()
 			currentLimit += 1
 			defer func() {
@@ -126,8 +166,9 @@ func TestMapLimit(t *testing.T) {
 			if currentLimit > maxLimit {
 				limitExceeded = true
 			}
-			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " ")
+			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " "), nil
 		}, maxLimit)
+		assert.NoError(nt, resultErr)
 		assert.Equal(nt, result, collectionResult)
 		assert.False(nt, limitExceeded)
 	})
@@ -139,7 +180,7 @@ func TestMapLimit(t *testing.T) {
 		rmu := sync.RWMutex{}
 		currentLimit := 0
 		limitExceeded := false
-		result := async.MapLimit(collection, func(key, val string) (string, string) {
+		result, resultErr := async.MapLimit(collection, func(key, val string) (string, string, error) {
 			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
 			rmu.Lock()
 			currentLimit += 1
@@ -150,8 +191,9 @@ func TestMapLimit(t *testing.T) {
 			if currentLimit > maxLimit {
 				limitExceeded = true
 			}
-			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " ")
+			return key, strings.Trim(strings.ReplaceAll(val, "the", ""), " "), nil
 		}, maxLimit)
+		assert.NoError(nt, resultErr)
 		assert.Equal(nt, result, collectionResult)
 		assert.False(nt, limitExceeded)
 	})

@@ -1,4 +1,4 @@
-# Queue Library
+# Queue
 
 A generic, concurrent queue implementation in Go with built-in worker pool semantics.
 
@@ -8,35 +8,18 @@ A generic, concurrent queue implementation in Go with built-in worker pool seman
 type Queue[T, R any] interface {
     Push(ctx context.Context, value T) (async.Result[R], error)
     Shutdown(ctx context.Context) error
-    
+
     Queued() int
     Running() int
     Status() Status
+    Config() Config
 }
-
-type Status int
-
-const (
-    StatusIdle Status = iota
-    StatusRunning
-    StatusClosed
-)
 
 type Config struct {
     Size           int
     Concurrency    int
     DefaultTimeout time.Duration // 0 = block forever, used when ctx has no deadline
 }
-
-func New[T, R any](
-    cfg Config,
-    process func(context.Context, T) (R, error),
-) Queue[T, R]
-
-var (
-    ErrQueueClosed = errors.New("queue is closed")
-    ErrPushTimeout = errors.New("push timeout exceeded")
-)
 ```
 
 ## Design Decisions
@@ -57,7 +40,7 @@ The queue processes items internally using the `process` function provided durin
 - Respects context deadline/cancellation
 - Falls back to `DefaultTimeout` if context has no deadline
 - Returns `ErrQueueClosed` if queue is closed
-- Returns `ErrPushTimeout` if timeout exceeded
+- Returns `ErrPushTimeout` if timeout exceeded while pushing to queue
 - If context is cancelled during processing, the `process` function receives the cancelled context and `async.Result[R]` returns context error
 
 **Timeout Priority:**
@@ -87,7 +70,7 @@ The queue processes items internally using the `process` function provided durin
 - **StatusRunning**: Items actively being processed
 - **StatusClosed**: Queue shut down
 
-**Note:** Status is purely informational for metrics/debugging. Race conditions exist between checking status and calling methods—don't use for flow control.
+**Note:** Status is purely informational for metrics/debugging. Race conditions exist between checking status and calling methods, don't use for flow control. Only exception is `StatusClosed` which is final.
 
 ### Metrics
 
@@ -102,6 +85,11 @@ The `process` function receives:
 - The input value of type T
 
 If the context is cancelled during processing, it's the `process` function's responsibility to respect cancellation.
+
+### Config Function
+
+Config function returns the actual configuration of the queue.
+
 
 ## Example Usage
 
@@ -137,8 +125,8 @@ if err != nil {
     return err
 }
 
-// Get result (blocks until processing completes)
-value, err := result.Get()
+// Await result (blocks until processing completes)
+value, err := result.Await()
 
 // Graceful shutdown with 30s timeout
 shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -153,5 +141,3 @@ This is a **worker pool with queuing**, not just a queue:
 - Items are processed internally by the queue
 - No `Pop()` method—processing logic is bundled with the queue
 - The queue manages worker goroutines based on `Concurrency` setting
-
-If you need a plain queue where the caller controls processing, this interface isn't appropriate. Consider a standard channel or a queue with `Pop()` semantics instead.
