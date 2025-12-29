@@ -131,7 +131,7 @@ func RejectMap[A comparable, B any](collection map[A]B, fn func(key A, value B) 
 }
 
 // SomeMap returns true if at least one element in the collection satisfies test.
-// If any iteratee call returns true, the function is returned immediately.
+// If any iteratee call returns true or error, the function is returned immediately.
 func SomeMap[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error)) (bool, error) {
 	for key, value := range collection {
 		if test, testErr := fn(key, value); testErr != nil {

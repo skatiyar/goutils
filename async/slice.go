@@ -4,9 +4,10 @@ import (
 	"sync"
 )
 
-type mapResult[A comparable, B any] struct {
+type opresult[A, B any] struct {
 	Key   A
 	Value B
+	Error error
 }
 
 func EachSlice[T any](collection []T, fn func(idx int, value T)) {
@@ -39,13 +40,13 @@ func EachSliceLimit[T any](collection []T, fn func(idx int, value T), limit int)
 
 func Slice[T any, S any](collection []T, fn func(val T) S) []S {
 	result := make([]S, len(collection))
-	resultChan := make(chan mapResult[int, S])
+	resultChan := make(chan opresult[int, S])
 	wg := sync.WaitGroup{}
 	for idx := range collection {
 		wg.Add(1)
 		go func(i int, val T) {
 			defer wg.Done()
-			resultChan <- mapResult[int, S]{
+			resultChan <- opresult[int, S]{
 				Key:   i,
 				Value: fn(val),
 			}
@@ -63,7 +64,7 @@ func Slice[T any, S any](collection []T, fn func(val T) S) []S {
 
 func SliceLimit[T any, S any](collection []T, fn func(val T) S, limit int) []S {
 	result := make([]S, len(collection))
-	resultChan := make(chan mapResult[int, S])
+	resultChan := make(chan opresult[int, S])
 	wg := sync.WaitGroup{}
 	guard := make(chan struct{}, limit)
 	defer close(guard)
@@ -76,7 +77,7 @@ func SliceLimit[T any, S any](collection []T, fn func(val T) S, limit int) []S {
 			// As results channel is not buffered and guard will block for loop
 			// till existing go routines are able to send on result channel
 			<-guard
-			resultChan <- mapResult[int, S]{
+			resultChan <- opresult[int, S]{
 				Key:   i,
 				Value: fn(val),
 			}
