@@ -25,7 +25,6 @@ func ConcatMapLimit[A comparable, B any, X any](collection map[A]B, fn func(key 
 	wg := sync.WaitGroup{}
 	resultChan := make(chan opresult[A, []X])
 	gaurd := make(chan struct{}, limit)
-	defer close(gaurd)
 	wg.Add(1)
 	go func(icol map[A]B) {
 		defer wg.Done()
@@ -66,6 +65,7 @@ func ConcatMapLimit[A comparable, B any, X any](collection map[A]B, fn func(key 
 	go func() {
 		wg.Wait()
 		close(resultChan)
+		close(gaurd)
 	}()
 	result := make([]X, 0)
 	for resVal := range resultChan {
@@ -89,7 +89,6 @@ func DetectMapLimit[A comparable, B any](collection map[A]B, fn func(key A, valu
 	wg := sync.WaitGroup{}
 	resultChan := make(chan opresult[B, bool])
 	gaurd := make(chan struct{}, limit)
-	defer close(gaurd)
 	wg.Add(1)
 	go func(icol map[A]B) {
 		defer wg.Done()
@@ -130,6 +129,7 @@ func DetectMapLimit[A comparable, B any](collection map[A]B, fn func(key A, valu
 	go func() {
 		wg.Wait()
 		close(resultChan)
+		close(gaurd)
 	}()
 	for resVal := range resultChan {
 		if resVal.Error != nil || resVal.Value {
@@ -147,7 +147,6 @@ func EachMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value 
 	wg := sync.WaitGroup{}
 	resultChan := make(chan error)
 	gaurd := make(chan struct{}, limit)
-	defer close(gaurd)
 	wg.Add(1)
 	go func(icol map[A]B) {
 		defer wg.Done()
@@ -184,6 +183,7 @@ func EachMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value 
 	go func() {
 		wg.Wait()
 		close(resultChan)
+		close(gaurd)
 	}()
 	for resVal := range resultChan {
 		if resVal != nil {
@@ -204,7 +204,6 @@ func MapLimit[A comparable, B any, X comparable, Z any](collection map[A]B, fn f
 	wg := sync.WaitGroup{}
 	resultChan := make(chan opresult[X, Z])
 	gaurd := make(chan struct{}, limit)
-	defer close(gaurd)
 	wg.Add(1)
 	go func(icol map[A]B) {
 		defer wg.Done()
@@ -245,6 +244,7 @@ func MapLimit[A comparable, B any, X comparable, Z any](collection map[A]B, fn f
 	go func() {
 		wg.Wait()
 		close(resultChan)
+		close(gaurd)
 	}()
 	result := make(map[X]Z)
 	for resVal := range resultChan {
@@ -254,4 +254,68 @@ func MapLimit[A comparable, B any, X comparable, Z any](collection map[A]B, fn f
 		result[resVal.Key] = resVal.Value
 	}
 	return result, nil
+}
+
+// SomeMap returns true if at least one element in the collection satisfies test.
+// Test are applied in parallel with max concurrency equal to number of keys in collection.
+// If any test call returns true or error, the function is returned immediately. But some test functions may still be running.
+func SomeMap[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error)) (bool, error) {
+	return SomeMapLimit(collection, fn, len(collection))
+}
+
+// SomeMapLimit is similar to SomeMap, returns true if at least one element in the collection satisfies test.
+// Test are applied in parallel with max concurrency restricted to limit provided.
+// If any test call returns true or error, the function is returned immediately. But some test functions may still be running.
+func SomeMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error), limit int) (bool, error) {
+	wg := sync.WaitGroup{}
+	resultChan := make(chan opresult[A, bool])
+	gaurd := make(chan struct{}, limit)
+	wg.Add(1)
+	go func(icol map[A]B) {
+		defer wg.Done()
+		stop := make(chan struct{})
+		for key, val := range icol {
+			select {
+			case <-stop:
+				return
+			default:
+				gaurd <- struct{}{}
+				wg.Add(1)
+				go func(k A, v B) {
+					defer func() {
+						if r := recover(); r != nil {
+							stopChannelCloser(stop)
+							if err, ok := r.(error); ok {
+								resultChan <- opresult[A, bool]{Error: err}
+							} else {
+								resultChan <- opresult[A, bool]{Error: fmt.Errorf("panic in function: %v", r)}
+							}
+						}
+						wg.Done()
+						<-gaurd
+					}()
+					rk, re := fn(k, v)
+					if re != nil || rk {
+						stopChannelCloser(stop)
+					}
+					resultChan <- opresult[A, bool]{
+						Key:   k,
+						Value: rk,
+						Error: re,
+					}
+				}(key, val)
+			}
+		}
+	}(collection)
+	go func() {
+		wg.Wait()
+		close(resultChan)
+		close(gaurd)
+	}()
+	for resVal := range resultChan {
+		if resVal.Error != nil || resVal.Value {
+			return resVal.Value, resVal.Error
+		}
+	}
+	return false, nil
 }

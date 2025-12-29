@@ -14,7 +14,11 @@ type Queue[T, R any] interface {
     Status() Status
     Config() Config
 }
+```
 
+## Configuration
+
+```
 type Config struct {
     Size           int
     Concurrency    int
@@ -22,20 +26,29 @@ type Config struct {
 }
 ```
 
-## Design Decisions
+## Design
 
 ### Type Parameters
 
 - **T**: Input value type
 - **R**: Result type after processing T
 
-The queue processes items internally using the `process` function provided during construction.
+The queue processes items internally using the `process` function provided in `New` constructor.
 
-### Push Behavior
+### New Behaviour
+
+`New[T, R any](cfg Config, process func(context.Context, T) (R, error)) Queue[T, R]`
+
+- Return a new instance of `QueueImpl`.
+- If `Size` passed in config in less than or equal to 0, it defaults to 100.
+- If `Concurrency` passed in config in less than or equal to 0, it defaults to 10.
+- If `DefaultTimeout` passed in config in less than or equal to 0, it defaults to 2562047 hours (effectively no timeout).
+
+### Push Behaviour
 
 `Push(ctx context.Context, value T) async.Result[R]`
 
-- Returns immediately with a future/promise (`async.Result[R]`)
+- Returns immediately with a future (`async.Result[R]`)
 - Blocks if queue is full
 - Respects context deadline/cancellation
 - Falls back to `DefaultTimeout` if context has no deadline
@@ -48,7 +61,7 @@ The queue processes items internally using the `process` function provided durin
 2. `DefaultTimeout` from config (if context has no deadline)
 3. Block forever if `DefaultTimeout` is 0 and context has no deadline
 
-### Shutdown Behavior
+### Shutdown Behaviour
 
 `Shutdown(ctx context.Context) error`
 
@@ -85,10 +98,6 @@ The `process` function receives:
 - The input value of type T
 
 If the context is cancelled during processing, it's the `process` function's responsibility to respect cancellation.
-
-### Config Function
-
-Config function returns the actual configuration of the queue.
 
 
 ## Example Usage

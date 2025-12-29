@@ -198,3 +198,86 @@ func TestMapLimit(t *testing.T) {
 		assert.False(nt, limitExceeded)
 	})
 }
+
+func TestSomeMapLimit(t *testing.T) {
+	t.Run("should return true if any function call returns true", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.SomeMapLimit(collection, func(key, val string) (bool, error) {
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			return strings.Contains(val, "jumps"), nil
+		}, 2)
+		assert.NoError(nt, resultErr)
+		assert.True(nt, result)
+	})
+
+	t.Run("should return false if all function calls return false", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.SomeMapLimit(collection, func(key, val string) (bool, error) {
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			return strings.Contains(val, "cat"), nil
+		}, 3)
+		assert.NoError(nt, resultErr)
+		assert.False(nt, result)
+	})
+
+	t.Run("should return error if any function call returns error", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.SomeMapLimit(collection, func(key, val string) (bool, error) {
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			if strings.Contains(val, "jumps") {
+				return false, errors.New("some error")
+			}
+			return false, nil
+		}, 2)
+		assert.Error(nt, resultErr)
+		assert.False(nt, result)
+	})
+
+	t.Run("should return immediately post true or error in function", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		startTime := time.Now()
+		result, resultErr := async.SomeMapLimit(collection, func(key, val string) (bool, error) {
+			time.Sleep(200 * time.Millisecond)
+			if strings.Contains(val, "jumps") {
+				return true, nil
+			}
+			return false, nil
+		}, 3)
+		elapsedTime := time.Since(startTime)
+		assert.NoError(nt, resultErr)
+		assert.True(nt, result)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 210) // ensuring it returned immediately after first true
+	})
+
+	t.Run("should return error if function panics", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.SomeMapLimit(collection, func(key, val string) (bool, error) {
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			panic("some panic")
+		}, 2)
+		assert.Error(nt, resultErr)
+		assert.False(nt, result)
+	})
+
+	t.Run("should not exceed limit", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence", "5": "and over", "6": "the lazy", "7": "dog"}
+		maxLimit := 3
+		rmu := sync.RWMutex{}
+		currentLimit := 0
+		limitExceeded := false
+		_, _ = async.SomeMapLimit(collection, func(key, val string) (bool, error) {
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			rmu.Lock()
+			currentLimit += 1
+			defer func() {
+				currentLimit -= 1
+				rmu.Unlock()
+			}()
+			if currentLimit > maxLimit {
+				limitExceeded = true
+			}
+			return false, nil
+		}, maxLimit)
+		assert.False(nt, limitExceeded)
+	})
+}
