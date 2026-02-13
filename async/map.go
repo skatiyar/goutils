@@ -5,68 +5,28 @@ import (
 	"sync"
 )
 
-func stopChannelCloser(ch chan struct{}) {
-	select {
-	case <-ch:
-		// already closed
-	default:
-		close(ch)
-	}
-}
-
 // ConcatMap applies iteratee to each item in collection, concatenating the results and returns the concatenated list.
 // The results array will be unorder as map iterations are unordered.
-// If iterator returns an error, function returns immediately with an error and result as nil.
+// If iterator returns an error, function returns immediately with an error. But some iteratee functions may still be running.
 func ConcatMap[A comparable, B any, X any](collection map[A]B, fn func(key A, value B) ([]X, error)) ([]X, error) {
 	return ConcatMapLimit(collection, fn, len(collection))
 }
 
+// ConcatMap applies iteratee to each item in collection, concatenating the results and returns the concatenated list.
+// The results array will be unorder as map iterations are unordered.
+// If iterator returns an error, function returns immediately with an error. But some iteratee functions may still be running.
 func ConcatMapLimit[A comparable, B any, X any](collection map[A]B, fn func(key A, value B) ([]X, error), limit int) ([]X, error) {
-	wg := sync.WaitGroup{}
-	resultChan := make(chan opresult[A, []X])
-	gaurd := make(chan struct{}, limit)
-	wg.Add(1)
-	go func(icol map[A]B) {
-		defer wg.Done()
-		stop := make(chan struct{})
-		for key, val := range icol {
-			select {
-			case <-stop:
-				return
-			default:
-				gaurd <- struct{}{}
-				wg.Add(1)
-				go func(k A, v B) {
-					defer func() {
-						if r := recover(); r != nil {
-							stopChannelCloser(stop)
-							if err, ok := r.(error); ok {
-								resultChan <- opresult[A, []X]{Error: err}
-							} else {
-								resultChan <- opresult[A, []X]{Error: fmt.Errorf("panic in function: %v", r)}
-							}
-						}
-						wg.Done()
-						<-gaurd
-					}()
-					rv, re := fn(k, v)
-					if re != nil {
-						stopChannelCloser(stop)
-					}
-					resultChan <- opresult[A, []X]{
-						Key:   k,
-						Value: rv,
-						Error: re,
-					}
-				}(key, val)
-			}
-		}
-	}(collection)
-	go func() {
-		wg.Wait()
-		close(resultChan)
-		close(gaurd)
-	}()
+	resultChan := executeMapLimit(
+		collection,
+		func(k A, v B) (opresult[A, []X], error) {
+			rv, re := fn(k, v)
+			return opresult[A, []X]{Key: k, Value: rv, Error: re}, re
+		},
+		limit,
+		func(_ opresult[A, []X], err error) bool { return err != nil },
+		func(err error) opresult[A, []X] { return opresult[A, []X]{Error: err} },
+	)
+
 	result := make([]X, 0)
 	for resVal := range resultChan {
 		if resVal.Error != nil {
@@ -86,51 +46,17 @@ func DetectMap[A comparable, B any](collection map[A]B, fn func(key A, value B) 
 // DetectMap returns the first value in collection that passes truth test, with a boolean signifying if the value was detected.
 // If iterator returns an error, function returns immediately with an error and detected as false.
 func DetectMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error), limit int) (B, bool, error) {
-	wg := sync.WaitGroup{}
-	resultChan := make(chan opresult[B, bool])
-	gaurd := make(chan struct{}, limit)
-	wg.Add(1)
-	go func(icol map[A]B) {
-		defer wg.Done()
-		stop := make(chan struct{})
-		for key, val := range icol {
-			select {
-			case <-stop:
-				return
-			default:
-				gaurd <- struct{}{}
-				wg.Add(1)
-				go func(k A, v B) {
-					defer func() {
-						if r := recover(); r != nil {
-							stopChannelCloser(stop)
-							if err, ok := r.(error); ok {
-								resultChan <- opresult[B, bool]{Error: err}
-							} else {
-								resultChan <- opresult[B, bool]{Error: fmt.Errorf("panic in function: %v", r)}
-							}
-						}
-						wg.Done()
-						<-gaurd
-					}()
-					ro, re := fn(k, v)
-					if re != nil || ro {
-						stopChannelCloser(stop)
-					}
-					resultChan <- opresult[B, bool]{
-						Key:   v,
-						Value: ro,
-						Error: re,
-					}
-				}(key, val)
-			}
-		}
-	}(collection)
-	go func() {
-		wg.Wait()
-		close(resultChan)
-		close(gaurd)
-	}()
+	resultChan := executeMapLimit(
+		collection,
+		func(k A, v B) (opresult[B, bool], error) {
+			ro, re := fn(k, v)
+			return opresult[B, bool]{Key: v, Value: ro, Error: re}, re
+		},
+		limit,
+		func(res opresult[B, bool], err error) bool { return err != nil || res.Value },
+		func(err error) opresult[B, bool] { return opresult[B, bool]{Error: err} },
+	)
+
 	for resVal := range resultChan {
 		if resVal.Error != nil || resVal.Value {
 			return resVal.Key, resVal.Value, resVal.Error
@@ -144,47 +70,17 @@ func EachMap[A comparable, B any](collection map[A]B, fn func(key A, value B) er
 }
 
 func EachMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B) error, limit int) error {
-	wg := sync.WaitGroup{}
-	resultChan := make(chan error)
-	gaurd := make(chan struct{}, limit)
-	wg.Add(1)
-	go func(icol map[A]B) {
-		defer wg.Done()
-		stop := make(chan struct{})
-		for key, val := range icol {
-			select {
-			case <-stop:
-				return
-			default:
-				gaurd <- struct{}{}
-				wg.Add(1)
-				go func(k A, v B) {
-					defer func() {
-						if r := recover(); r != nil {
-							stopChannelCloser(stop)
-							if err, ok := r.(error); ok {
-								resultChan <- err
-							} else {
-								resultChan <- fmt.Errorf("panic in function: %v", r)
-							}
-						}
-						wg.Done()
-						<-gaurd
-					}()
-					re := fn(k, v)
-					if re != nil {
-						stopChannelCloser(stop)
-					}
-					resultChan <- re
-				}(key, val)
-			}
-		}
-	}(collection)
-	go func() {
-		wg.Wait()
-		close(resultChan)
-		close(gaurd)
-	}()
+	resultChan := executeMapLimit(
+		collection,
+		func(k A, v B) (error, error) {
+			err := fn(k, v)
+			return err, err
+		},
+		limit,
+		func(_ error, err error) bool { return err != nil },
+		func(err error) error { return err },
+	)
+
 	for resVal := range resultChan {
 		if resVal != nil {
 			return resVal
@@ -201,51 +97,17 @@ func Map[A comparable, B any, X comparable, Z any](collection map[A]B, fn func(k
 }
 
 func MapLimit[A comparable, B any, X comparable, Z any](collection map[A]B, fn func(key A, value B) (X, Z, error), limit int) (map[X]Z, error) {
-	wg := sync.WaitGroup{}
-	resultChan := make(chan opresult[X, Z])
-	gaurd := make(chan struct{}, limit)
-	wg.Add(1)
-	go func(icol map[A]B) {
-		defer wg.Done()
-		stop := make(chan struct{})
-		for key, val := range icol {
-			select {
-			case <-stop:
-				return
-			default:
-				gaurd <- struct{}{}
-				wg.Add(1)
-				go func(k A, v B) {
-					defer func() {
-						if r := recover(); r != nil {
-							stopChannelCloser(stop)
-							if err, ok := r.(error); ok {
-								resultChan <- opresult[X, Z]{Error: err}
-							} else {
-								resultChan <- opresult[X, Z]{Error: fmt.Errorf("panic in function: %v", r)}
-							}
-						}
-						wg.Done()
-						<-gaurd
-					}()
-					rk, rv, re := fn(k, v)
-					if re != nil {
-						stopChannelCloser(stop)
-					}
-					resultChan <- opresult[X, Z]{
-						Key:   rk,
-						Value: rv,
-						Error: re,
-					}
-				}(key, val)
-			}
-		}
-	}(collection)
-	go func() {
-		wg.Wait()
-		close(resultChan)
-		close(gaurd)
-	}()
+	resultChan := executeMapLimit(
+		collection,
+		func(k A, v B) (opresult[X, Z], error) {
+			rk, rv, re := fn(k, v)
+			return opresult[X, Z]{Key: rk, Value: rv, Error: re}, re
+		},
+		limit,
+		func(_ opresult[X, Z], err error) bool { return err != nil },
+		func(err error) opresult[X, Z] { return opresult[X, Z]{Error: err} },
+	)
+
 	result := make(map[X]Z)
 	for resVal := range resultChan {
 		if resVal.Error != nil {
@@ -267,42 +129,78 @@ func SomeMap[A comparable, B any](collection map[A]B, fn func(key A, value B) (b
 // Test are applied in parallel with max concurrency restricted to limit provided.
 // If any test call returns true or error, the function is returned immediately. But some test functions may still be running.
 func SomeMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error), limit int) (bool, error) {
+	resultChan := executeMapLimit(
+		collection,
+		func(k A, v B) (opresult[A, bool], error) {
+			rk, re := fn(k, v)
+			return opresult[A, bool]{Key: k, Value: rk, Error: re}, re
+		},
+		limit,
+		func(res opresult[A, bool], err error) bool { return err != nil || res.Value },
+		func(err error) opresult[A, bool] { return opresult[A, bool]{Error: err} },
+	)
+
+	for resVal := range resultChan {
+		if resVal.Error != nil || resVal.Value {
+			return resVal.Value, resVal.Error
+		}
+	}
+	return false, nil
+}
+
+// executeMapLimit executes fn on each map entry with concurrency limiting and panic recovery.
+// shouldStop is called after each fn execution to determine if processing should halt early.
+// makeErrorResult converts an error into a result of type R (needed for panic recovery).
+// Returns a channel that emits results (including errors from panics or fn).
+func executeMapLimit[K comparable, V any, R any](
+	collection map[K]V,
+	fn func(K, V) (R, error),
+	limit int,
+	shouldStop func(R, error) bool,
+	makeErrorResult func(error) R,
+) chan R {
 	wg := sync.WaitGroup{}
-	resultChan := make(chan opresult[A, bool])
-	gaurd := make(chan struct{}, limit)
+	resultChan := make(chan R)
+	guard := make(chan struct{}, limit)
+	var stopOnce sync.Once
+	stop := make(chan struct{})
+
+	closeStop := func() {
+		stopOnce.Do(func() {
+			close(stop)
+		})
+	}
+
 	wg.Add(1)
-	go func(icol map[A]B) {
+	go func(icol map[K]V) {
 		defer wg.Done()
-		stop := make(chan struct{})
 		for key, val := range icol {
 			select {
 			case <-stop:
 				return
 			default:
-				gaurd <- struct{}{}
+				guard <- struct{}{}
 				wg.Add(1)
-				go func(k A, v B) {
+				go func(k K, v V) {
 					defer func() {
 						if r := recover(); r != nil {
-							stopChannelCloser(stop)
-							if err, ok := r.(error); ok {
-								resultChan <- opresult[A, bool]{Error: err}
+							closeStop()
+							var err error
+							if e, ok := r.(error); ok {
+								err = e
 							} else {
-								resultChan <- opresult[A, bool]{Error: fmt.Errorf("panic in function: %v", r)}
+								err = fmt.Errorf("panic in function: %v", r)
 							}
+							resultChan <- makeErrorResult(err)
 						}
 						wg.Done()
-						<-gaurd
+						<-guard
 					}()
-					rk, re := fn(k, v)
-					if re != nil || rk {
-						stopChannelCloser(stop)
+					result, err := fn(k, v)
+					if shouldStop != nil && shouldStop(result, err) {
+						closeStop()
 					}
-					resultChan <- opresult[A, bool]{
-						Key:   k,
-						Value: rk,
-						Error: re,
-					}
+					resultChan <- result
 				}(key, val)
 			}
 		}
@@ -310,12 +208,107 @@ func SomeMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value 
 	go func() {
 		wg.Wait()
 		close(resultChan)
-		close(gaurd)
+		close(guard)
 	}()
+	return resultChan
+}
+
+// FilterMap returns a new map of all entries in map which pass truth test in parallel.
+// Tests are executed in parallel with max concurrency equal to map size.
+// If any test returns an error, function returns immediately with error.
+func FilterMap[K comparable, V any](collection map[K]V, fn func(key K, value V) (bool, error)) (map[K]V, error) {
+	return FilterMapLimit(collection, fn, len(collection))
+}
+
+// FilterMapLimit is similar to FilterMap but limits concurrent executions.
+// Tests are executed in parallel with max concurrency restricted to limit.
+// If any test returns an error, function returns immediately with error.
+func FilterMapLimit[K comparable, V any](collection map[K]V, fn func(key K, value V) (bool, error), limit int) (map[K]V, error) {
+	resultChan := executeMapLimit(
+		collection,
+		func(k K, v V) (opresult[K, bool], error) {
+			passes, err := fn(k, v)
+			return opresult[K, bool]{Key: k, Value: passes, Error: err}, err
+		},
+		limit,
+		func(_ opresult[K, bool], err error) bool { return err != nil },
+		func(err error) opresult[K, bool] { return opresult[K, bool]{Error: err} },
+	)
+
+	result := make(map[K]V)
 	for resVal := range resultChan {
-		if resVal.Error != nil || resVal.Value {
-			return resVal.Value, resVal.Error
+		if resVal.Error != nil {
+			return nil, resVal.Error
+		}
+		if resVal.Value {
+			result[resVal.Key] = collection[resVal.Key]
 		}
 	}
-	return false, nil
+	return result, nil
+}
+
+// RejectMap is the opposite of FilterMap. Removes entries that pass truth test in parallel.
+// Tests are executed in parallel with max concurrency equal to map size.
+// If any test returns an error, function returns immediately with error.
+func RejectMap[K comparable, V any](collection map[K]V, fn func(key K, value V) (bool, error)) (map[K]V, error) {
+	return RejectMapLimit(collection, fn, len(collection))
+}
+
+// RejectMapLimit is similar to RejectMap but limits concurrent executions.
+// Tests are executed in parallel with max concurrency restricted to limit.
+// If any test returns an error, function returns immediately with error.
+func RejectMapLimit[K comparable, V any](collection map[K]V, fn func(key K, value V) (bool, error), limit int) (map[K]V, error) {
+	resultChan := executeMapLimit(
+		collection,
+		func(k K, v V) (opresult[K, bool], error) {
+			passes, err := fn(k, v)
+			return opresult[K, bool]{Key: k, Value: passes, Error: err}, err
+		},
+		limit,
+		func(_ opresult[K, bool], err error) bool { return err != nil },
+		func(err error) opresult[K, bool] { return opresult[K, bool]{Error: err} },
+	)
+
+	result := make(map[K]V)
+	for resVal := range resultChan {
+		if resVal.Error != nil {
+			return nil, resVal.Error
+		}
+		if !resVal.Value {
+			result[resVal.Key] = collection[resVal.Key]
+		}
+	}
+	return result, nil
+}
+
+// GroupByMap returns a new map, where each value corresponds to a slice of items, from map, that returned the corresponding key in parallel.
+// That is, the keys of the result map correspond to the values returned by the iteratee callback.
+// If any iterator returns an error, function returns immediately with an error.
+func GroupByMap[K comparable, V any, GK comparable, GV any](collection map[K]V, fn func(key K, value V) (GK, GV, error)) (map[GK][]GV, error) {
+	return GroupByMapLimit(collection, fn, len(collection))
+}
+
+// GroupByMapLimit is similar to GroupByMap but limits concurrent executions.
+// Iteratees are executed in parallel with max concurrency restricted to limit.
+// If any iterator returns an error, function returns immediately with an error.
+func GroupByMapLimit[K comparable, V any, GK comparable, GV any](collection map[K]V, fn func(key K, value V) (GK, GV, error), limit int) (map[GK][]GV, error) {
+	resultChan := executeMapLimit(
+		collection,
+		func(k K, v V) (opresult[GK, GV], error) {
+			gk, gv, err := fn(k, v)
+			return opresult[GK, GV]{Key: gk, Value: gv, Error: err}, err
+		},
+		limit,
+		func(_ opresult[GK, GV], err error) bool { return err != nil },
+		func(err error) opresult[GK, GV] { return opresult[GK, GV]{Error: err} },
+	)
+
+	result := make(map[GK][]GV)
+	for resVal := range resultChan {
+		if resVal.Error != nil {
+			return nil, resVal.Error
+		}
+		result[resVal.Key] = append(result[resVal.Key], resVal.Value)
+	}
+	return result, nil
 }

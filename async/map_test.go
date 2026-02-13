@@ -3,6 +3,7 @@ package async_test
 import (
 	"errors"
 	"math/rand"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -11,6 +12,54 @@ import (
 	"github.com/skatiyar/goutils/async"
 	"github.com/stretchr/testify/assert"
 )
+
+func TestConcatMapLimit(t *testing.T) {
+	t.Run("should return correct values for sync operations", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		expectedResult := []string{"brown", "fox", "jumps", "over", "brown", "fence"}
+		r, rerr := async.ConcatMapLimit(collection, func(key, val string) ([]string, error) {
+			return strings.Split(strings.Trim(strings.ReplaceAll(val, "the", ""), " "), " "), nil
+		}, 2)
+		assert.NoError(nt, rerr)
+		assert.ElementsMatch(nt, r, expectedResult)
+	})
+
+	t.Run("should return correct values for async operations", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		expectedResult := []string{"brown", "fox", "jumps", "over", "brown", "fence"}
+		r, rerr := async.ConcatMapLimit(collection, func(key, val string) ([]string, error) {
+			time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
+			return strings.Split(strings.Trim(strings.ReplaceAll(val, "the", ""), " "), " "), nil
+		}, 3)
+		assert.NoError(nt, rerr)
+		assert.ElementsMatch(nt, r, expectedResult)
+	})
+
+	t.Run("should return error if function returns error", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		r, rerr := async.ConcatMapLimit(collection, func(key, val string) ([]string, error) {
+			return nil, errors.New("some error")
+		}, 2)
+		assert.Error(nt, rerr)
+		assert.Nil(nt, r)
+	})
+
+}
+
+func TestConcatMap(t *testing.T) {
+	t.Run("should spawn correct number of goroutines", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		expectedGoroutines := len(collection)
+		beforeGoroutines := runtime.NumGoroutine()
+		_, _ = async.ConcatMap(collection, func(key, val string) ([]string, error) {
+			time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
+			return strings.Split(strings.Trim(strings.ReplaceAll(val, "the", ""), " "), " "), nil
+		})
+		afterGoroutines := runtime.NumGoroutine()
+		actualGoroutines := afterGoroutines - beforeGoroutines
+		assert.LessOrEqual(nt, actualGoroutines, expectedGoroutines)
+	})
+}
 
 func TestEachMap(t *testing.T) {
 	t.Run("should return correct values for sync operations", func(nt *testing.T) {
