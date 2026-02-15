@@ -6,14 +6,15 @@ import (
 )
 
 // ConcatMap applies iteratee to each item in collection, concatenating the results and returns the concatenated list.
-// The results array will be unorder as map iterations are unordered.
+// The results array will be unordered as map iterations are unordered.
 // If iterator returns an error, function returns immediately with an error. But some iteratee functions may still be running.
 func ConcatMap[A comparable, B any, X any](collection map[A]B, fn func(key A, value B) ([]X, error)) ([]X, error) {
 	return ConcatMapLimit(collection, fn, len(collection))
 }
 
-// ConcatMap applies iteratee to each item in collection, concatenating the results and returns the concatenated list.
-// The results array will be unorder as map iterations are unordered.
+// ConcatMapLimit is similar to ConcatMap but limits concurrent executions.
+// Iteratees are executed in parallel with max concurrency restricted to limit.
+// The results array will be unordered as map iterations are unordered.
 // If iterator returns an error, function returns immediately with an error. But some iteratee functions may still be running.
 func ConcatMapLimit[A comparable, B any, X any](collection map[A]B, fn func(key A, value B) ([]X, error), limit int) ([]X, error) {
 	resultChan := executeMapLimit(
@@ -43,7 +44,8 @@ func DetectMap[A comparable, B any](collection map[A]B, fn func(key A, value B) 
 	return DetectMapLimit(collection, fn, len(collection))
 }
 
-// DetectMap returns the first value in collection that passes truth test, with a boolean signifying if the value was detected.
+// DetectMapLimit is similar to DetectMap but limits concurrent executions.
+// Tests are executed in parallel with max concurrency restricted to limit.
 // If iterator returns an error, function returns immediately with an error and detected as false.
 func DetectMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error), limit int) (B, bool, error) {
 	resultChan := executeMapLimit(
@@ -65,10 +67,16 @@ func DetectMapLimit[A comparable, B any](collection map[A]B, fn func(key A, valu
 	return *new(B), false, nil
 }
 
+// EachMap applies the function iteratee to each item in map in parallel.
+// The iteratee is called with key and value from collection.
+// If any iteratee returns an error, function returns immediately with an error. But some iteratee functions may still be running.
 func EachMap[A comparable, B any](collection map[A]B, fn func(key A, value B) error) error {
 	return EachMapLimit(collection, fn, len(collection))
 }
 
+// EachMapLimit is similar to EachMap but limits concurrent executions.
+// Iteratees are executed in parallel with max concurrency restricted to limit.
+// If any iteratee returns an error, function returns immediately with an error. But some iteratee functions may still be running.
 func EachMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B) error, limit int) error {
 	resultChan := executeMapLimit(
 		collection,
@@ -96,6 +104,9 @@ func Map[A comparable, B any, X comparable, Z any](collection map[A]B, fn func(k
 	return MapLimit(collection, fn, len(collection))
 }
 
+// MapLimit is similar to Map but limits concurrent executions.
+// Transformations are executed in parallel with max concurrency restricted to limit.
+// If the iterator returns an error, function returns immediately with an error. But some iteratee functions may still be running.
 func MapLimit[A comparable, B any, X comparable, Z any](collection map[A]B, fn func(key A, value B) (X, Z, error), limit int) (map[X]Z, error) {
 	resultChan := executeMapLimit(
 		collection,
@@ -146,6 +157,36 @@ func SomeMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value 
 		}
 	}
 	return false, nil
+}
+
+// EveryMap returns true if every element in the collection satisfies test.
+// Test are applied in parallel with max concurrency equal to number of keys in collection.
+// If any test call returns false or error, the function is returned immediately. But some test functions may still be running.
+func EveryMap[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error)) (bool, error) {
+	return EveryMapLimit(collection, fn, len(collection))
+}
+
+// EveryMapLimit is similar to EveryMap, returns true if every element in the collection satisfies test.
+// Test are applied in parallel with max concurrency restricted to limit provided.
+// If any test call returns false or error, the function is returned immediately. But some test functions may still be running.
+func EveryMapLimit[A comparable, B any](collection map[A]B, fn func(key A, value B) (bool, error), limit int) (bool, error) {
+	resultChan := executeMapLimit(
+		collection,
+		func(k A, v B) (opresult[A, bool], error) {
+			rk, re := fn(k, v)
+			return opresult[A, bool]{Key: k, Value: rk, Error: re}, re
+		},
+		limit,
+		func(res opresult[A, bool], err error) bool { return err != nil || !res.Value },
+		func(err error) opresult[A, bool] { return opresult[A, bool]{Error: err} },
+	)
+
+	for resVal := range resultChan {
+		if resVal.Error != nil || !resVal.Value {
+			return resVal.Value, resVal.Error
+		}
+	}
+	return true, nil
 }
 
 // executeMapLimit executes fn on each map entry with concurrency limiting and panic recovery.

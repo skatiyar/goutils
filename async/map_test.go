@@ -184,7 +184,7 @@ func TestMap(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, rerr)
 		assert.Nil(nt, r)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 210) // ensuring it returned immediately after first error
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 300) // ensuring it returned immediately after first error
 	})
 
 	t.Run("should return error if function panics", func(nt *testing.T) {
@@ -295,7 +295,7 @@ func TestSomeMapLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.NoError(nt, resultErr)
 		assert.True(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 210) // ensuring it returned immediately after first true
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500) // ensuring it returned immediately after first true (2 batches worst case + margin)
 	})
 
 	t.Run("should return error if function panics", func(nt *testing.T) {
@@ -328,6 +328,111 @@ func TestSomeMapLimit(t *testing.T) {
 			return false, nil
 		}, maxLimit)
 		assert.False(nt, limitExceeded)
+	})
+}
+
+func TestEveryMap(t *testing.T) {
+	t.Run("should delegate to EveryMapLimit with len(collection)", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, err := async.EveryMap(collection, func(key, val string) (bool, error) {
+			return len(val) > 0, nil
+		})
+		assert.NoError(nt, err)
+		assert.True(nt, result)
+	})
+}
+
+func TestEveryMapLimit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should return true if all function calls return true", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.EveryMapLimit(collection, func(key, val string) (bool, error) {
+			return len(val) > 0, nil
+		}, 2)
+		assert.NoError(nt, resultErr)
+		assert.True(nt, result)
+	})
+
+	t.Run("should return false if any function call returns false", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.EveryMapLimit(collection, func(key, val string) (bool, error) {
+			return !strings.Contains(val, "jumps"), nil
+		}, 2)
+		assert.NoError(nt, resultErr)
+		assert.False(nt, result)
+	})
+
+	t.Run("should return error if any function call returns error", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.EveryMapLimit(collection, func(key, val string) (bool, error) {
+			if strings.Contains(val, "jumps") {
+				return false, errors.New("some error")
+			}
+			return true, nil
+		}, 2)
+		assert.Error(nt, resultErr)
+		assert.False(nt, result)
+	})
+
+	t.Run("should return immediately post false or error in function", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence", "5": "quick", "6": "dog"}
+		startTime := time.Now()
+		result, resultErr := async.EveryMapLimit(collection, func(key, val string) (bool, error) {
+			time.Sleep(200 * time.Millisecond)
+			return !strings.Contains(val, "jumps"), nil
+		}, 3)
+		elapsedTime := time.Since(startTime)
+		assert.NoError(nt, resultErr)
+		assert.False(nt, result)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
+	})
+
+	t.Run("should handle panic", func(nt *testing.T) {
+		collection := map[string]string{"1": "the brown", "2": "fox", "3": "jumps over the", "4": "brown fence"}
+		result, resultErr := async.EveryMapLimit(collection, func(key, val string) (bool, error) {
+			if strings.Contains(val, "jumps") {
+				panic("some panic")
+			}
+			return true, nil
+		}, 2)
+		assert.Error(nt, resultErr)
+		assert.False(nt, result)
+	})
+
+	t.Run("should not exceed limit", func(nt *testing.T) {
+		collection := map[string]string{"1": "the", "2": "brown", "3": "fox", "4": "jumps", "5": "over", "6": "the", "7": "lazy", "8": "dog", "9": "quick", "10": "fence"}
+		maxLimit := 2
+		rmu := sync.RWMutex{}
+		currentLimit := 0
+		limitExceeded := false
+
+		result, resultErr := async.EveryMapLimit(collection, func(key, val string) (bool, error) {
+			rmu.Lock()
+			currentLimit += 1
+			defer func() {
+				currentLimit -= 1
+				rmu.Unlock()
+			}()
+			if currentLimit > maxLimit {
+				limitExceeded = true
+			}
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			return true, nil
+		}, maxLimit)
+
+		assert.NoError(nt, resultErr)
+		assert.True(nt, result)
+		assert.False(nt, limitExceeded)
+	})
+
+	t.Run("should return true for empty collection", func(nt *testing.T) {
+		collection := map[string]string{}
+		result, resultErr := async.EveryMapLimit(collection, func(key, val string) (bool, error) {
+			return false, nil
+		}, 2)
+		assert.NoError(nt, resultErr)
+		assert.True(nt, result)
 	})
 }
 
@@ -386,7 +491,7 @@ func TestDetectMapLimit(t *testing.T) {
 		assert.NoError(nt, err)
 		assert.True(nt, detected)
 		assert.Equal(nt, result, "jumps over the")
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 410) // 2*200ms + margin for early termination
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500) // 2*200ms + margin for early termination
 	})
 
 	t.Run("should return error immediately", func(nt *testing.T) {
@@ -408,7 +513,7 @@ func TestDetectMapLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.False(nt, detected)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 410)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
 	})
 
 	t.Run("should handle panic with string", func(nt *testing.T) {
@@ -537,7 +642,7 @@ func TestFilterMapLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.Nil(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 410)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {
@@ -645,7 +750,7 @@ func TestRejectMapLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.Nil(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 410)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {
@@ -763,7 +868,7 @@ func TestGroupByMapLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.Nil(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 410)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {

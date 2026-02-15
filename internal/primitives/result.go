@@ -1,3 +1,8 @@
+/*
+Package primitives provides low-level primitives used by other goutils packages.
+
+This is an internal package and should not be imported directly by user code.
+*/
 package primitives
 
 type resultValue[T any] struct {

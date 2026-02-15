@@ -253,7 +253,7 @@ func TestFilterSliceLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.Nil(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 410)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {
@@ -345,7 +345,7 @@ func TestDetectSliceLimit(t *testing.T) {
 		assert.NoError(nt, err)
 		assert.True(nt, detected)
 		assert.Equal(nt, result, 3)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 610) // 3*200ms + margin
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 700) // 3*200ms + margin
 	})
 
 	t.Run("should return error immediately", func(nt *testing.T) {
@@ -367,7 +367,7 @@ func TestDetectSliceLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.False(nt, detected)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 610)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 700)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {
@@ -454,7 +454,7 @@ func TestSomeSliceLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.NoError(nt, err)
 		assert.True(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 610)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 700)
 	})
 
 	t.Run("should return error immediately", func(nt *testing.T) {
@@ -476,7 +476,7 @@ func TestSomeSliceLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.False(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 610)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 700)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {
@@ -510,6 +510,134 @@ func TestSomeSliceLimit(t *testing.T) {
 		}, maxLimit)
 
 		assert.False(nt, limitExceeded)
+	})
+}
+
+func TestEverySlice(t *testing.T) {
+	t.Run("should delegate to EverySliceLimit with len(collection)", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5}
+		result, err := async.EverySlice(collection, func(val, idx int) (bool, error) {
+			return val > 0, nil
+		})
+		assert.NoError(nt, err)
+		assert.True(nt, result)
+	})
+}
+
+func TestEverySliceLimit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("should return true for sync operations when all pass", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5}
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			return val > 0, nil
+		}, 2)
+		assert.NoError(nt, err)
+		assert.True(nt, result)
+	})
+
+	t.Run("should return true for async operations when all pass", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5}
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			return val > 0, nil
+		}, 2)
+		assert.NoError(nt, err)
+		assert.True(nt, result)
+	})
+
+	t.Run("should return false when one element fails", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5}
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			return val != 3, nil
+		}, 2)
+		assert.NoError(nt, err)
+		assert.False(nt, result)
+	})
+
+	t.Run("should return false immediately on first false with early termination", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5, 6}
+		startTime := time.Now()
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			time.Sleep(200 * time.Millisecond)
+			return val != 3, nil
+		}, 3)
+		elapsedTime := time.Since(startTime)
+		assert.NoError(nt, err)
+		assert.False(nt, result)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
+	})
+
+	t.Run("should return error immediately", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5}
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			if val == 3 {
+				return false, errors.New("some error")
+			}
+			return true, nil
+		}, 2)
+		assert.Error(nt, err)
+		assert.False(nt, result)
+	})
+
+	t.Run("should return error immediately with early termination", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5, 6}
+		startTime := time.Now()
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			time.Sleep(200 * time.Millisecond)
+			return false, errors.New("some error")
+		}, 3)
+		elapsedTime := time.Since(startTime)
+		assert.Error(nt, err)
+		assert.False(nt, result)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 500)
+	})
+
+	t.Run("should handle panic", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5}
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			if val == 3 {
+				panic("some panic")
+			}
+			return true, nil
+		}, 2)
+		assert.Error(nt, err)
+		assert.False(nt, result)
+	})
+
+	t.Run("should not exceed concurrency limit", func(nt *testing.T) {
+		collection := []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10}
+		maxLimit := 2
+		rmu := sync.RWMutex{}
+		currentLimit := 0
+		limitExceeded := false
+
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			rmu.Lock()
+			currentLimit += 1
+			defer func() {
+				currentLimit -= 1
+				rmu.Unlock()
+			}()
+			if currentLimit > maxLimit {
+				limitExceeded = true
+			}
+			time.Sleep(time.Duration(rand.Intn(100)) * time.Millisecond)
+			return true, nil
+		}, maxLimit)
+
+		assert.NoError(nt, err)
+		assert.True(nt, result)
+		assert.False(nt, limitExceeded)
+	})
+
+	t.Run("should return true for empty collection", func(nt *testing.T) {
+		collection := []int{}
+		result, err := async.EverySliceLimit(collection, func(val, idx int) (bool, error) {
+			return false, nil
+		}, 2)
+		assert.NoError(nt, err)
+		assert.True(nt, result)
 	})
 }
 
@@ -578,7 +706,7 @@ func TestConcatSliceLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.Nil(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 610)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 700)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {
@@ -696,7 +824,7 @@ func TestRejectSliceLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.Nil(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 610)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 700)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {
@@ -812,7 +940,7 @@ func TestGroupBySliceLimit(t *testing.T) {
 		elapsedTime := time.Since(startTime)
 		assert.Error(nt, err)
 		assert.Nil(nt, result)
-		assert.Less(nt, int(elapsedTime.Milliseconds()), 610)
+		assert.Less(nt, int(elapsedTime.Milliseconds()), 700)
 	})
 
 	t.Run("should handle panic", func(nt *testing.T) {

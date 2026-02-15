@@ -6,7 +6,7 @@ Golang utility functions to ease working with goroutines and provide functional 
 [![codecov](https://codecov.io/gh/skatiyar/goutils/graph/badge.svg?token=ND6O9OWB1H)](https://codecov.io/gh/skatiyar/goutils)
 
 ## Features
-goutils provides around 60 functions that include the usual 'functional' suspects (map, reduce, filter, each…) as well as some common patterns for asynchronous control flow (async/await, queue, waterfall). Package [`goutils`](https://pkg.go.dev/github.com/skatiyar/goutils) has sync `map`, `reduce` etc., whereas [`goutils/async`](https://pkg.go.dev/github.com/skatiyar/goutils/async) has concurrent `map`, `reduce` etc.
+goutils provides around 70 functions that include the usual 'functional' suspects (map, reduce, filter, each…) as well as some common patterns for asynchronous control flow (async/await, queue, waterfall). Package [`goutils`](https://pkg.go.dev/github.com/skatiyar/goutils) has sync `map`, `reduce` etc., whereas [`goutils/async`](https://pkg.go.dev/github.com/skatiyar/goutils/async) has concurrent `map`, `reduce` etc.
 
 ### Example: Using [`async.Async`](https://pkg.go.dev/github.com/skatiyar/goutils/async#Async)
 

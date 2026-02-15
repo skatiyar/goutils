@@ -234,8 +234,38 @@ func SomeSliceLimit[T any](collection []T, fn func(value T, idx int) (bool, erro
 	return false, nil
 }
 
+// EverySlice returns true if every element in the slice satisfies test in parallel.
+// Tests are executed in parallel with max concurrency equal to slice length.
+// If any test returns false or error, the function returns immediately.
+func EverySlice[T any](collection []T, fn func(value T, idx int) (bool, error)) (bool, error) {
+	return EverySliceLimit(collection, fn, len(collection))
+}
+
+// EverySliceLimit is similar to EverySlice but limits concurrent executions.
+// Tests are executed in parallel with max concurrency restricted to limit.
+// If any test returns false or error, the function returns immediately.
+func EverySliceLimit[T any](collection []T, fn func(value T, idx int) (bool, error), limit int) (bool, error) {
+	resultChan := executeSliceLimit(
+		collection,
+		func(idx int, val T) (opresult[int, bool], error) {
+			passes, err := fn(val, idx)
+			return opresult[int, bool]{Key: idx, Value: passes, Error: err}, err
+		},
+		limit,
+		func(res opresult[int, bool], err error) bool { return err != nil || !res.Value },
+		func(err error) opresult[int, bool] { return opresult[int, bool]{Error: err} },
+	)
+
+	for resVal := range resultChan {
+		if resVal.Error != nil || !resVal.Value {
+			return resVal.Value, resVal.Error
+		}
+	}
+	return true, nil
+}
+
 // ConcatSlice applies iteratee to each item in slice, concatenating the results and returns the concatenated list in parallel.
-// The results array will be unordered as concatenation happens asynchronously.
+// Results are concatenated as they complete. The order may not match the input slice order as execution happens asynchronously.
 // If any iterator returns an error, function returns immediately with an error.
 func ConcatSlice[T any, R any](collection []T, fn func(value T, idx int) ([]R, error)) ([]R, error) {
 	return ConcatSliceLimit(collection, fn, len(collection))
