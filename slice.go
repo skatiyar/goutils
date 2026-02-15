@@ -144,7 +144,7 @@ func RejectSlice[A any](collection []A, fn func(value A, idx int) (bool, error))
 }
 
 // SomeSlice returns true if at least one element in the slice satisfies test.
-// If any iteratee call returns true, the function is returned immediately.
+// If any iteratee call returns true or error, the function is returned immediately.
 func SomeSlice[A any](collection []A, fn func(value A, idx int) (bool, error)) (bool, error) {
 	for idx, value := range collection {
 		if test, testErr := fn(value, idx); testErr != nil {

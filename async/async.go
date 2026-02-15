@@ -1,3 +1,17 @@
+/*
+Package async provides concurrent implementations of common functional programming utilities.
+
+All functions in this package execute operations in parallel using goroutines with configurable
+concurrency limits. This package includes concurrent versions of map, filter, reduce, and other
+collection operations for both slices and maps.
+
+Functions come in two variants:
+  - Base functions (e.g., MapSlice, FilterMap) run with unlimited concurrency
+  - Limit functions (e.g., MapSliceLimit, FilterMapLimit) allow concurrency control
+
+Most functions support early termination: if any operation returns an error, the function
+returns immediately, though some goroutines may still be running.
+*/
 package async
 
 import (

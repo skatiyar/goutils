@@ -4,8 +4,8 @@
 
 /*
 Package goutils is an utility package which provides straight-forward, powerful functions for working with go routines.
-It takes inspiration from https://caolan.github.io/async and implements utility functions in an idomatic Go way.
+It takes inspiration from https://caolan.github.io/async and implements utility functions in an idiomatic Go way.
 
-goutils provides around 60 functions that include the usual 'functional' suspects (map, reduce, filter, each…) as well as some common patterns for asynchronous control flow (parallel, series, waterfall…).
+goutils provides around 70 functions that include the usual 'functional' suspects (map, reduce, filter, each…) as well as some common patterns for asynchronous control flow (waterfall, async/await, queue).
 */
 package goutils

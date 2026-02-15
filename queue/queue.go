@@ -1,3 +1,10 @@
+/*
+Package queue provides a concurrent work queue with configurable concurrency and buffering.
+
+The queue processes tasks asynchronously with a fixed number of workers, providing
+backpressure through a buffered channel. Each pushed task returns a Result that
+can be awaited for completion.
+*/
 package queue
 
 import (
